@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>pose_verification</name>
+  <version>0.0.1</version>
+  <description>pose_verification</description>
+  <maintainer email="manuel_philipp.vogel@tum.de">Manuel Vogel</maintainer>
+  <license>Apache 2.0</license>
+
+  <author>Manuel Vogel</author>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <build_depend>message_generation</build_depend>
+  <build_export_depend>message_runtime</build_export_depend>
+  <exec_depend>message_runtime</exec_depend>
+
+  <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>concert_msgs</depend>
+  <depend>tf</depend>
+  <depend>tf_conversions</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>roscpp</depend>
+  
+</package>
