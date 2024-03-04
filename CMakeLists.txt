@@ -9,10 +9,13 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   tf2
   tf2_ros
+  pcl_ros
+  pcl_conversions
   visualization_msgs
   geometry_msgs
   sensor_msgs
   concert_msgs
+  gazebo_msgs
 )
 
 
@@ -23,10 +26,13 @@ catkin_package(
     roscpp
     tf2
     tf2_ros
+    pcl_ros
+    pcl_conversions
     visualization_msgs
     geometry_msgs
     sensor_msgs
     concert_msgs
+    gazebo_msgs
 )
 
 add_executable(pose_verification
