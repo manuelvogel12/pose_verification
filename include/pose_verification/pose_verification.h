@@ -4,6 +4,7 @@
 #include <vector>
 
 #include <ros/ros.h>
+#include <pcl/kdtree/kdtree_flann.h>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
@@ -13,6 +14,7 @@
 #include <sensor_msgs/PointCloud2.h>
 #include <concert_msgs/Humans.h>
 #include <gazebo_msgs/ModelStates.h>
+#include <visualization_msgs/Marker.h>
 
 
 class PoseVerification
@@ -28,19 +30,36 @@ public:
 
     void modelStatesCallback(const gazebo_msgs::ModelStates::ConstPtr& msg);
 
-
 private:
+
+    int getClosestPCLPointIndex(pcl::KdTreeFLANN<pcl::PointXYZ>& kdtree, geometry_msgs::Point& point);
 
     ros::NodeHandle _nh;
 
     /**
-     * @brief Human measurement points to be used in sara shield
+     * @brief Fixed number of maximum allowed humans in the scene
      */
-    std::vector<geometry_msgs::Point> _human_meas[2];
-    //TODO: fix for any amount of humans
+    const static int MAX_NUM_HUMANS = 5; 
 
-    double _human_meas_time[2];
+    /**
+     * @brief Human measurement points
+     */
+    std::vector<geometry_msgs::Point> _human_meas[MAX_NUM_HUMANS];
 
+    /**
+     * @brief The last receiving time of the human i 
+     */
+    double _human_meas_time[MAX_NUM_HUMANS];
+
+    /**
+     * @brief Whether the human with index i has been received yet 
+     */
+    bool human_message_received[MAX_NUM_HUMANS] = {false};
+
+    /**
+     * @brief Time of last received modelStatesCallback message 
+     */
+    ros::Time last_message_time;
 
     /**
      * @brief tf2 transformation buffer to lookup the position and orientation of the robot
@@ -69,8 +88,11 @@ private:
      */
     ros::Subscriber _model_state_sub;
 
-    ros::Publisher _velodyne_human_pub;
-
+    /**
+     * @brief Ros publisher to publish debug markers showing the distance 
+     * from the expected human point to the closest lidar point
+     */
+    ros::Publisher _line_marker_pub;
 };
 
 

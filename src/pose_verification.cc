@@ -3,6 +3,8 @@
 #include <pcl_ros/transforms.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/PCLPointCloud2.h>
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
 
 
 PoseVerification::PoseVerification(ros::NodeHandle nh):
@@ -10,9 +12,10 @@ PoseVerification::PoseVerification(ros::NodeHandle nh):
   _human_joint_sub(_nh.subscribe("/sara_shield/human_pose_measurement", 100, &PoseVerification::humanJointCallback, this)),
   _velodyne_sub(_nh.subscribe("/VLP16_lidar_front/velodyne_points", 100, &PoseVerification::velodyneCallback, this)),
   _model_state_sub(_nh.subscribe("/gazebo/model_states", 100, &PoseVerification::modelStatesCallback, this)),
-  _velodyne_human_pub(_nh.advertise<sensor_msgs::PointCloud2>("/TEST/velodyne", 100)),
+  _line_marker_pub(_nh.advertise<visualization_msgs::Marker>("/pose_verification/line_list", 10)),
   _tfListener(_tfBuffer)
 {
+  last_message_time = ros::Time::now();
 }
 
 
@@ -20,27 +23,72 @@ void PoseVerification::velodyneCallback(const sensor_msgs::PointCloud2ConstPtr& 
   // get the lidar point cloud
   std::cout<<"Point Cloud Received"<<std::endl;
   std::cout<<"Size of Point cloud:"<<msg->width <<"x"<< msg->height<<std::endl;
-  
-  // debug output point cloud 
-  sensor_msgs::PointCloud2 humanPointCloud;
-  int count = 0;
+
+  // debug visualization message 
+  visualization_msgs::Marker line_list;
+  line_list.header.frame_id = "VLP16_lidar_front";
+  line_list.header.stamp = ros::Time::now();
+  line_list.ns = "pose_verification_line_list";
+  line_list.id = 0;
+  line_list.action = visualization_msgs::Marker::ADD;
+  line_list.type = visualization_msgs::Marker::LINE_LIST;
+  line_list.scale.x = 0.1; // Line width
+  line_list.color.r = 1.0; // Red
+  line_list.color.a = 1.0; // Alpha (transparency)
 
   // convert to pcl for more efficient point cloud handling
   pcl::PCLPointCloud2 pcl_pc2;
   pcl_conversions::toPCL(*msg, pcl_pc2);
+  
+  // Convert pcl_pc2 to pcl::PointCloud
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::fromPCLPointCloud2(pcl_pc2, *cloud);
+  
+  // Create a KD-Tree
+  pcl::KdTreeFLANN<pcl::PointXYZ> kdtree;
+  kdtree.setInputCloud(cloud);
 
-  for(int human_index = 0; human_index < 2; human_index++){
-    for(geometry_msgs::Point& humanPoint:_human_meas[human_index]){
-      // TODO find all points close to a human 
+  // validate pose for every detected human
+  for(int human_index = 0; human_index < MAX_NUM_HUMANS; human_index++){
+
+    // use only detected humans
+    if (!human_message_received[human_index]){
+      continue;
+    }
+
+    // use chest and hands of the human as searchpoints
+    for (int point_index : {6, 22, 23}) {
+      geometry_msgs::Point humanPoint = _human_meas[human_index][point_index];
+
+      pcl::PointXYZ nearestPointPCL = cloud->points[getClosestPCLPointIndex(kdtree, humanPoint)];
+      geometry_msgs::Point nearestPoint;
+      nearestPoint.x = nearestPointPCL.x; nearestPoint.y = nearestPointPCL.y; nearestPoint.z = nearestPointPCL.z;
+      
+      // make line between expected and actual location 
+      line_list.points.push_back(humanPoint);
+      line_list.points.push_back(nearestPoint);
     }
   }
-   
+  _line_marker_pub.publish(line_list);
+}
 
-  // send out debug pointcloud
-  humanPointCloud.header = msg->header;
-  humanPointCloud.width = count;
-  humanPointCloud.height = 1;
-  _velodyne_human_pub.publish(humanPointCloud);
+
+int PoseVerification::getClosestPCLPointIndex(pcl::KdTreeFLANN<pcl::PointXYZ>& kdtree, geometry_msgs::Point& point){
+  geometry_msgs::Point nearestPoint;
+  int K = 1; // Number of closest points to search for
+  std::vector<int> pointIdxNKNSearch(K);
+  std::vector<float> pointNKNSquaredDistance(K);
+
+  pcl::PointXYZ searchPoint;
+  searchPoint.x = point.x; searchPoint.y = point.y; searchPoint.z = point.z;
+
+  // nearest neighbor search
+  if (kdtree.nearestKSearch(searchPoint, K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0) {
+    return pointIdxNKNSearch[0];
+  }
+  else{
+    return 0;
+  }
 }
 
 
@@ -60,11 +108,12 @@ void PoseVerification::humanJointCallback(const concert_msgs::HumansConstPtr& ms
     ROS_WARN("NO TRANSFORM FOUND (Lookup failed)");
     return;
   } catch (tf2::ExtrapolationException const&) {
-    ROS_WARN("NO TRANSFORM FOUND (ExtrapolationException)");
+    ROS_INFO("NO TRANSFORM FOUND (ExtrapolationException)");
     return;
   }
 
   //get all human measurment points and transform them to the LiDAR coordinate system
+  // TODO: do the transformation in the Lidar callback
   if(msg->humans.size() > 0){
     for (const concert_msgs::Human3D &human: msg->humans){
       int human_index = human.label_id;
@@ -81,15 +130,22 @@ void PoseVerification::humanJointCallback(const concert_msgs::HumansConstPtr& ms
         _human_meas_time[human_index] = msg->header.stamp.toSec();
 
       }
-      std::cout<<"Human received"<<std::endl;
+      //std::cout<<"Human received"<<std::endl;
+      human_message_received[human_index] = true;
     }
-  } 
+  }
 }
 
 
 
 //convert the gazebo transformation between world and base_link into a tf
 void PoseVerification::modelStatesCallback(const gazebo_msgs::ModelStates::ConstPtr& msg) {
+  // avoid calling the function 2000 times per second
+  if ((ros::Time::now() - last_message_time).toSec() < 0.01){
+    return;
+  }
+  // std::cout<<"seconds passed"<<ros::Time::now() - last_message_time<<" seconds"<<std::endl;
+  last_message_time = ros::Time::now();
   ROS_DEBUG("Incoming Transform");
   // find the index of the robot transform in the list of transforms
   int index = -1;
